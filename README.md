@@ -1,4 +1,4 @@
 bsonrpc
 =======
 
-Equivalent of net/rpc/jsonrpc, except with bson
+Implementation for net/rpc/jsonrpc, with bson

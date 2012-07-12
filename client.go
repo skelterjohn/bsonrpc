@@ -1,123 +1,80 @@
-// Copyright 2010 The Go Authors.  All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
-// Package jsonrpc implements a JSON-RPC ClientCodec and ServerCodec
-// for the rpc package.
-package jsonrpc
+package bsonrpc
 
 import (
-	"encoding/json"
-	"fmt"
 	"io"
-	"net"
 	"net/rpc"
-	"sync"
 )
 
-type clientCodec struct {
-	dec *json.Decoder // for reading JSON values
-	enc *json.Encoder // for writing JSON values
-	c   io.Closer
+/*
+type ClientCodec interface {
+    WriteRequest(*Request, interface{}) error
+    ReadResponseHeader(*Response) error
+    ReadResponseBody(interface{}) error
 
-	// temporary work space
-	req  clientRequest
-	resp clientResponse
+    Close() error
+}
+*/
 
-	// JSON-RPC responses include the request id but not the request method.
-	// Package rpc expects both.
-	// We save the request method in pending when sending a request
-	// and then look it up by request ID when filling out the rpc Response.
-	mutex   sync.Mutex        // protects pending
-	pending map[uint64]string // map request id to method name
+type ccodec struct {
+	conn io.ReadWriteCloser
+	enc  *Encoder
+	dec  *Decoder
 }
 
-// NewClientCodec returns a new rpc.ClientCodec using JSON-RPC on conn.
-func NewClientCodec(conn io.ReadWriteCloser) rpc.ClientCodec {
-	return &clientCodec{
-		dec:     json.NewDecoder(conn),
-		enc:     json.NewEncoder(conn),
-		c:       conn,
-		pending: make(map[uint64]string),
+func NewClientCodec(conn io.ReadWriteCloser) (codec rpc.ClientCodec) {
+	cc := &ccodec{
+		conn: conn,
+		enc:  NewEncoder(conn),
+		dec:  NewDecoder(conn),
 	}
+	codec = cc
+	return
 }
 
-type clientRequest struct {
-	Method string         `json:"method"`
-	Params [1]interface{} `json:"params"`
-	Id     uint64         `json:"id"`
+/*
+type Request struct {
+	ServiceMethod string   // format: "Service.Method"
+	Seq           uint64   // sequence number chosen by client
+	next          *Request // for free list in Server
 }
 
-func (c *clientCodec) WriteRequest(r *rpc.Request, param interface{}) error {
-	c.mutex.Lock()
-	c.pending[r.Seq] = r.ServiceMethod
-	c.mutex.Unlock()
-	c.req.Method = r.ServiceMethod
-	c.req.Params[0] = param
-	c.req.Id = r.Seq
-	return c.enc.Encode(&c.req)
+type Response struct {
+	ServiceMethod string    // echoes that of the Request
+	Seq           uint64    // echoes that of the request
+	Error         string    // error, if any.
+	next          *Response // for free list in Server
 }
+*/
 
-type clientResponse struct {
-	Id     uint64           `json:"id"`
-	Result *json.RawMessage `json:"result"`
-	Error  interface{}      `json:"error"`
-}
-
-func (r *clientResponse) reset() {
-	r.Id = 0
-	r.Result = nil
-	r.Error = nil
-}
-
-func (c *clientCodec) ReadResponseHeader(r *rpc.Response) error {
-	c.resp.reset()
-	if err := c.dec.Decode(&c.resp); err != nil {
-		return err
-	}
-
-	c.mutex.Lock()
-	r.ServiceMethod = c.pending[c.resp.Id]
-	delete(c.pending, c.resp.Id)
-	c.mutex.Unlock()
-
-	r.Error = ""
-	r.Seq = c.resp.Id
-	if c.resp.Error != nil {
-		x, ok := c.resp.Error.(string)
-		if !ok {
-			return fmt.Errorf("invalid error %v", c.resp.Error)
-		}
-		if x == "" {
-			x = "unspecified error"
-		}
-		r.Error = x
-	}
-	return nil
-}
-
-func (c *clientCodec) ReadResponseBody(x interface{}) error {
-	if x == nil {
-		return nil
-	}
-	return json.Unmarshal(*c.resp.Result, x)
-}
-
-func (c *clientCodec) Close() error {
-	return c.c.Close()
-}
-
-// NewClient returns a new rpc.Client to handle requests to the
-// set of services at the other end of the connection.
-func NewClient(conn io.ReadWriteCloser) *rpc.Client {
-	return rpc.NewClientWithCodec(NewClientCodec(conn))
-}
-
-// Dial connects to a JSON-RPC server at the specified network address.
-func Dial(network, address string) (*rpc.Client, error) {
-	conn, err := net.Dial(network, address)
+func (cc *ccodec) WriteRequest(req *rpc.Request, v interface{}) (err error) {
+	err = cc.enc.Encode(req)
 	if err != nil {
-		return nil, err
+		return
 	}
-	return NewClient(conn), err
+	err = cc.enc.Encode(v)
+	if err != nil {
+		return
+	}
+	return
+}
+
+func (cc *ccodec) ReadResponseHeader(res *rpc.Response) (err error) {
+	err = cc.dec.Decode(res)
+	return
+}
+
+func (cc *ccodec) ReadResponseBody(v interface{}) (err error) {
+	err = cc.dec.Decode(v)
+	return
+}
+
+func (cc *ccodec) Close() (err error) {
+	err = cc.conn.Close()
+	return
+}
+
+func NewClient(conn io.ReadWriteCloser) (c *rpc.Client) {
+	cc := NewClientCodec(conn)
+	c = rpc.NewClientWithCodec(cc)
+	return
 }
