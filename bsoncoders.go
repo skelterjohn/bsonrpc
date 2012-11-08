@@ -1,10 +1,10 @@
 package bsonrpc
 
 import (
-	"io"
 	"errors"
 	"fmt"
-	"launchpad.net/mgo/v2/bson"
+	"io"
+	"labix.org/v2/mgo/bson"
 )
 
 type Encoder struct {

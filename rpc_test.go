@@ -2,8 +2,8 @@ package bsonrpc
 
 import (
 	"io"
-	"testing"
 	"net/rpc"
+	"testing"
 )
 
 type duplex struct {
